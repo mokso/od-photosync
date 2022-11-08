@@ -3,8 +3,10 @@ Param(
   [Switch] $LogOut
 )
 #dotsource functions and configuration
-. .\onedrive-functions.ps1
-. .\config.ps1
+. "$PSScriptRoot\logging-functions.ps1"
+. "$PSScriptRoot\onedrive-functions.ps1"
+. "$PSScriptRoot\config.ps1"
+
 
 
 function RunSync {  
@@ -15,18 +17,22 @@ function RunSync {
   foreach ($f in $cameraRollFiles) {
     $filename = $f.name
     $fileid = $f.id
-    Write-host "Processing [$filename]"
+    WriteLog -Msg "Processing [$filename]"
+    if (-not $f.file) {
+      # not a file, skip
+      continue
+    }
   
     $takenDateTime = if ($f.photo.takenDateTime) {
       #photos has this
       $f.photo.takenDateTime
     } elseif ($f.photo.alternateTakenDateTime) {
-      #vides has this 
+      #videos has this 
       $f.photo.alternateTakenDateTime
     }
   
     if (-not $takenDateTime) {
-      Write-host "Not photo or video? $filename [$fileid], skipping..."
+      WriteLog -Msg "Not photo or video? filename [$filename] [$fileid], skipping..."
       continue
     }
   
@@ -37,24 +43,24 @@ function RunSync {
     #check if target file already exists
     $exists = EnsureFileSynced -TargetPath $storageFullPath -OneDriveItem $f -RemoveIfExists $true
     if ($exists) {
-      Write-host "File [$filename] already exists locally, processing next one..."
+      WriteLog -Msg "File [$filename] already exists locally, processing next one..."
       continue
     }
   
     # ensure target folder exists
     if (-not (Test-Path $storeagePath)) {
-      Write-host "Creating directory [$storeagePath]"
+      WriteLog -Msg "Creating directory [$storeagePath]"
       New-Item $storeagePath -ItemType Directory
     }
   
     $sourceUrl = $f.'@content.downloadUrl'
-    Write-host "Start download file $($f.name) to [$storageFullPath]  from [$sourceUrl]"
+    WriteLog -Msg "Start download file $($f.name) to [$storageFullPath]  from [$sourceUrl]"
     Start-BitsTransfer -Source $sourceUrl -Destination $storageFullPath
   
     # Ensure download succesful
     $exists = EnsureFileSynced -TargetPath $storageFullPath -OneDriveItem $f -RemoveIfExists $true
     if (-not $exists) {
-      Write-Warning "Something went wrong with $filname"
+      WriteLog -Level Error -Msg "Something went wrong with $filname"
     }
   }
 }
@@ -67,29 +73,29 @@ function Authenticate {
 
 
   if (Test-path $AuthFile) {
-    Write-host "Getting auth from file $SAuthfile"
+    WriteLog -Msg "Getting auth from file $SAuthfile"
     $OldAuth = Import-Clixml -Path $AuthFile
     if (-not $OldAuth.refresh_token) {
-      Write-Warning "no refresh token...WTF?"
+      WriteLog -Level Error -Msg "no refresh token...WTF?"
       return
     }
     if ($OldAuth.expires -lt (Get-Date).AddMinutes(-5)) {
-      Write-host "Getting new access token"
+      WriteLog -Msg "Getting new access token"
       $Auth = GetODAuthentication -ClientID $appid -AppKey $secret -RedirectURI $redirectUri -RefreshToken $OldAuth.refresh_token
     }
     else {
-      Write-host "reusing persisted access-token"
+      WriteLog -Msg "reusing persisted access-token"
       $Auth = $OldAuth
     }
   } 
   else {
 
-    Write-host "No persisted token, authenticating to graph api"
+    WriteLog -Msg "No persisted token, authenticating to graph api"
     $Auth = GetODAuthentication -ClientID $appid -AppKey $secret -RedirectURI $redirectUri -ProfileName $ProfileName
   }
   
   if ($Auth.access_token) {
-    Write-host "Saving to $AuthFile"
+    WriteLog -Msg "Saving to $AuthFile"
     $Auth | Export-Clixml -Path $AuthFile
     $script:OnedriveAccessToken = $Auth.access_token
     return $true
@@ -101,14 +107,20 @@ function Authenticate {
 
 }
 
+########### Execution #########
+WriteLog "*********************************************"
+WriteLog "PhotoSync Starting..."
+
+
+
 if ($LogOut) {
-  Write-host "Logging out..."
+  WriteLog -Msg "Logging out..."
   GetODAuthentication -ClientID $appid -LogOut
   return
 }
 
 foreach ($p in $PhotoSyncProfiles) {
-  write-host "profile: `n$($p | ConvertTo-Json)"
+  WriteLog -Msg "profile: `n$($p | ConvertTo-Json)"
   $dataFolder = Join-Path $PersistFolder "PhotoSync"
   #ensure folder exists 
   if (-not (Test-Path $dataFolder)){
@@ -119,10 +131,11 @@ foreach ($p in $PhotoSyncProfiles) {
 
   if (Authenticate -AuthFile $AuthFile -ProfileName $p.Name) {
     #GetODCameraRollItems
-    Write-host "Running sync for profile [$($p.Name)]"
+    WriteLog -Msg "Running sync for profile [$($p.Name)]"
     RunSync
   }
 }
+WriteLog "PhotoSync Done"
 
 
 

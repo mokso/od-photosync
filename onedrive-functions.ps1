@@ -150,7 +150,7 @@ function GetODAuthentication
 function GetODCameraRollItems {
   Param(
     [string ]$AccessToken = $script:OneDriveAccessToken,
-    [string] $ItemProperties = "id,name,size,@content.downloadUrl,lastModifiedDateTime,photo,video"
+    [string] $ItemProperties = "id,file,name,size,@content.downloadUrl,lastModifiedDateTime,photo,video"
   )
 
   if (-not $AccessToken) {
@@ -207,7 +207,7 @@ function RemoveOdItemById {
 	  Accept = "application/json"
 	}
 	$url = "$RootUrl/drive/items/$ItemId"
-	Write-Host "Invoking DELETE $url"
+	Write-Verbose "Invoking DELETE $url"
 	$response = Invoke-RestMethod -Method Delete -Uri $url -Headers $headers
 	return $response
 }
@@ -250,15 +250,15 @@ function EnsureFileSynced {
 	$existingFile = Get-ChildItem $TargetPath
 
 	if ($existingFile.Length -eq $OneDriveItem.size) {
-		Write-host "Size match, must be same file"
+		Write-Verbose "Size match, must be same file"
 		if ($RemoveIfExists) {
 			RemoveOdItemById -ItemId $OneDriveItem.id
 		}
 	}
 	else {
-		Write-Warning "File exists but size not matching!"
-		Write-Warning "OneDrive: $($OneDriveItem.size)"
-		Write-Warning "LocalNAS: $($existingFile.Length)"
+		WriteLog -Level "Warning" -Msg "File exists but size not matching!"
+		WriteLog -Level "Warning" -Msg  "OneDrive: $($OneDriveItem.size)"
+		WriteLog -Level "Warning" -Msg "LocalNAS: $($existingFile.Length)"
 	}
 	return $true
 }
