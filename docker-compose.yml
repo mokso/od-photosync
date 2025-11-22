@@ -1,10 +1,10 @@
-version: '3.8'
+#version: '3.8'
 
 services:
   photosync:
-    # Use pre-built image from GitHub Container Registry
-    image: ghcr.io/mokso/od-photosync:latest
-    # OR build locally (comment out 'image' and uncomment 'build')
+    # Use pre-built image from GitHub Container Registry (once workflow has run)
+    image: ghcr.io/mokso/od-photosync:python-rewrite
+    # OR build locally (default until image is published)
     # build: .
     container_name: photosync
     volumes:
@@ -19,5 +19,4 @@ services:
       - DATA_DIR=/app/data
       - TZ=Europe/Helsinki
     restart: unless-stopped
-    profiles:
-      - manual
+
