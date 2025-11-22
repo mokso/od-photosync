@@ -1,0 +1,20 @@
+# AzureAD app config
+$redirectUri = "http://localhost/login"
+$appid = "your-client-id-here"  # Get from Azure Portal
+$secret = ''  # Leave empty for personal accounts
+
+# Refresh token will be persisted to PhotoSync subfolder
+$PersistFolder = $PSScriptRoot
+
+$script:PhotoSyncProfiles = @(
+    @{
+        "Name" = "Profile1"
+        "RemoveDownloaded" = $true
+        "DestinationFolder" = "Z:\media\Photos\Profile1"
+    }
+    @{
+        "Name" = "Profile2"
+        "RemoveDownloaded" = $true
+        "DestinationFolder" = "Z:\media\Photos\Profile2"
+    }
+)

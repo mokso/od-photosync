@@ -1,0 +1,22 @@
+#version: '3.8'
+
+services:
+  photosync:
+    # Use pre-built image from GitHub Container Registry (once workflow has run)
+    image: ghcr.io/mokso/od-photosync:python-rewrite
+    # OR build locally (default until image is published)
+    # build: .
+    container_name: photosync
+    volumes:
+      # Mount your NAS destination
+      - /mnt/nas/photos:/photos
+      # Persist authentication tokens and logs
+      - ./data:/app/data
+      # Mount config
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - RUNNING_IN_CONTAINER=true
+      - DATA_DIR=/app/data
+      - TZ=Europe/Helsinki
+    restart: unless-stopped
+
