@@ -1,5 +1,9 @@
 # od-photosync
 
+[![Docker Build](https://github.com/mokso/od-photosync/actions/workflows/docker-build.yml/badge.svg)](https://github.com/mokso/od-photosync/actions/workflows/docker-build.yml)
+[![Docker Image](https://ghcr-badge.egpl.dev/mokso/od-photosync/latest_tag?trim=major&label=latest)](https://github.com/mokso/od-photosync/pkgs/container/od-photosync)
+[![Docker Pulls](https://ghcr-badge.egpl.dev/mokso/od-photosync/size)](https://github.com/mokso/od-photosync/pkgs/container/od-photosync)
+
 Sync OneDrive camera roll to local NAS storage. Python implementation with container support.
 
 ## Features
@@ -34,6 +38,32 @@ python photosync.py
 
 ### Docker
 
+#### Using Pre-built Image (Recommended)
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/mokso/od-photosync:latest
+
+# Or use docker-compose with pre-built image
+# Update docker-compose.yml to use: image: ghcr.io/mokso/od-photosync:latest
+
+# Initial auth (interactive)
+docker run --rm -it \
+  -v ./data:/app/data \
+  -v ./config.yaml:/app/config.yaml:ro \
+  ghcr.io/mokso/od-photosync:latest \
+  python photosync.py --initial-auth
+
+# Run sync
+docker run --rm \
+  -v /mnt/nas/photos:/photos \
+  -v ./data:/app/data \
+  -v ./config.yaml:/app/config.yaml:ro \
+  ghcr.io/mokso/od-photosync:latest
+```
+
+#### Building Locally
+
 ```bash
 # Build
 docker-compose build
@@ -44,6 +74,15 @@ docker-compose run --rm photosync python photosync.py --initial-auth
 # Run sync
 docker-compose run --rm photosync
 ```
+
+**Available Tags:**
+- `latest` - Latest build from main branch
+- `main` - Latest build from main branch
+- `python-rewrite` - Development branch
+- `v*` - Specific version tags
+- `sha-<commit>` - Specific commit builds
+
+See [CONTAINER.md](CONTAINER.md) for detailed container documentation and Kubernetes deployment examples.
 
 ## PowerShell Version
 
