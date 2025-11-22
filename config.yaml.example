@@ -1,0 +1,19 @@
+# Microsoft App Registration Client ID
+# Get from: https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade
+client_id: "your-client-id-here"
+
+# Data directory for storing auth tokens and logs
+data_dir: "./data"
+
+# Photo sync profiles
+profiles:
+  - name: "Profile1"
+    destination_folder: "Z:/media/Photos/Profile1"  # Windows path example
+    remove_downloaded: true
+  
+  - name: "Profile2"
+    destination_folder: "Z:/media/Photos/Profile2"
+    remove_downloaded: true
+
+# For Docker, use paths like:
+# destination_folder: "/photos/Profile1"
