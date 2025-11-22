@@ -108,6 +108,49 @@ profiles:
 
 See [SETUP.md](SETUP.md) for detailed setup instructions.
 
+## Authentication: Python vs PowerShell
+
+This Python implementation uses a different authentication approach compared to the original PowerShell version:
+
+| Aspect | Python (This Version) | PowerShell (Original) |
+|--------|----------------------|----------------------|
+| **Auth Flow** | Device Code Flow | Interactive Browser Flow |
+| **API** | Microsoft Graph API v1.0 | OneDrive API v1.0 |
+| **Client Secret** | Not required | Required |
+| **Scopes** | `Files.ReadWrite` | `onedrive.readwrite` |
+| **Headless Support** | ✅ Yes (perfect for containers) | ❌ No (requires GUI) |
+| **User Experience** | Enter code on any device | Browser opens automatically |
+| **Container Ready** | ✅ Yes | Limited |
+
+### Device Code Flow (Python)
+
+When you run `python photosync.py --initial-auth`, you'll see:
+
+```
+To sign in, use a web browser to open the page https://www.microsoft.com/link
+and enter the code ABC12345 to authenticate.
+```
+
+You can authenticate on **any device** (phone, tablet, another computer) by:
+1. Opening the URL in a browser
+2. Entering the code shown
+3. Signing in with your Microsoft account
+
+This makes it ideal for:
+- 🐳 Docker containers
+- 🖥️ Headless servers
+- 🔒 Secure environments without GUI
+- 📱 Authentication from mobile devices
+
+### Interactive Browser Flow (PowerShell)
+
+The PowerShell version automatically opens a browser window on the same machine, requiring:
+- A GUI environment (Windows desktop)
+- Interactive session
+- Browser access on the same system
+
+**Note:** You can use the same Azure app registration for both versions, but the Python version needs "Allow public client flows" enabled.
+
 ## Usage
 
 ```bash
