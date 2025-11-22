@@ -38,35 +38,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate CalVer version
-        id: calver
-        run: |
-          echo "version=$(date +'%Y.%m.%d')" >> $GITHUB_OUTPUT
-          echo "version_short=$(date +'%Y.%m')" >> $GITHUB_OUTPUT
-          echo "version_year=$(date +'%Y')" >> $GITHUB_OUTPUT
-
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            # CalVer: YYYY.MM.DD (e.g., 2025.11.22)
-            type=raw,value=${{ steps.calver.outputs.version }},enable={{is_default_branch}}
-            # CalVer: YYYY.MM (e.g., 2025.11)
-            type=raw,value=${{ steps.calver.outputs.version_short }},enable={{is_default_branch}}
-            # CalVer: YYYY (e.g., 2025)
-            type=raw,value=${{ steps.calver.outputs.version_year }},enable={{is_default_branch}}
+            # CalVer for main branch: YYYY.MM.DD
+            type=raw,value={{date 'YYYY.MM.DD'}},enable={{is_default_branch}}
+            # CalVer: YYYY.MM
+            type=raw,value={{date 'YYYY.MM'}},enable={{is_default_branch}}
+            # CalVer: YYYY
+            type=raw,value={{date 'YYYY'}},enable={{is_default_branch}}
             # Branch name for development
             type=ref,event=branch
             # PR number
             type=ref,event=pr
-            # Git tag support (if you want to use manual tags)
+            # Git tag support (semantic versioning)
             type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
             # Latest tag on main branch
             type=raw,value=latest,enable={{is_default_branch}}
-            # Commit SHA for debugging
-            type=sha,prefix={{branch}}-
+            # Commit SHA with branch prefix (only for main and PRs)
+            type=sha,prefix={{branch}}-,enable=${{ github.ref == 'refs/heads/main' || github.event_name == 'pull_request' }}
 
       - name: Build and push Docker image
         id: build-push
