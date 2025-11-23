@@ -3,20 +3,29 @@
 services:
   photosync:
     # Use pre-built image from GitHub Container Registry (once workflow has run)
-    image: ghcr.io/mokso/od-photosync:python-rewrite
+    image: ghcr.io/mokso/od-photosync:latest
     # OR build locally (default until image is published)
     # build: .
     container_name: photosync
     volumes:
-      # Mount your NAS destination
-      - /mnt/nas/photos:/photos
+      # For Proxmox LXC: Mount point passed through from Proxmox host
+      # (Set up via Proxmox bind mount: mp0: /mnt/omv/photos,mp=/mnt/photos)
+      - /mnt/kuvat:/mnt/kuvat
+      
       # Persist authentication tokens and logs
       - ./data:/app/data
       # Mount config
       - ./config.yaml:/app/config.yaml:ro
+    command: python photosync.py --schedule
     environment:
       - RUNNING_IN_CONTAINER=true
       - DATA_DIR=/app/data
       - TZ=Europe/Helsinki
     restart: unless-stopped
+
+# For Proxmox LXC with OMV VM setup:
+# 1. On Proxmox host: mount -t nfs <OMV_IP>:/kuvat-share /mnt/kuvat-share
+# 2. Bind mount to LXC: pct set <CTID> -mp0 /mnt/kuvat-share,mp=/mnt/kuvat
+# 3. Add to Proxmox /etc/fstab for persistence
+# 4. Container automatically sees /mnt/kuvat via bind mount above
 

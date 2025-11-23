@@ -5,15 +5,58 @@ client_id: "your-client-id-here"
 # Data directory for storing auth tokens and logs
 data_dir: "./data"
 
-# Photo sync profiles
-profiles:
+# Scheduled sync interval in minutes (used with --schedule flag)
+# Examples: 60 = hourly, 1440 = daily, 10080 = weekly
+# Leave commented for manual runs only
+schedule_interval_minutes: 60
+
+# Device code flow authentication timeout in seconds
+# If user doesn't authenticate within this time, profile is skipped
+# Default: 300 (5 minutes)
+auth_timeout_seconds: 300
+
+# Healthchecks.io monitoring (optional)
+# Get your ping URL from: https://healthchecks.io/projects/<project>/checks/
+# Sends /start signal at beginning, success (no suffix) or /fail at end
+# Leave commented to disable monitoring
+# healthcheck_url: "https://hc-ping.com/your-uuid-here"
+
+# Download profiles - sync FROM OneDrive camera roll TO local NAS
+# (Previously just 'profiles', still supported for backwards compatibility)
+download_profiles:
   - name: "Profile1"
     destination_folder: "Z:/media/Photos/Profile1"  # Windows path example
-    remove_downloaded: true
+    remove_downloaded: true  # Delete from OneDrive after successful download
   
   - name: "Profile2"
     destination_folder: "Z:/media/Photos/Profile2"
-    remove_downloaded: true
+    remove_downloaded: false
+
+# Upload profiles - sync FROM local NAS TO OneDrive
+upload_profiles:
+  - name: "NasBackup"  # Unique profile name for authentication
+    source_folder: "Z:/media/Documents"  # Local folder to upload from
+    onedrive_folder: "/Backup/Documents"  # OneDrive destination folder
+    file_patterns:  # File patterns to include (glob patterns, searches recursively)
+      - "*.pdf"
+      - "*.docx"
+      - "*.xlsx"
+    preserve_structure: true  # Keep folder structure (true) or flatten all files (false)
+    remove_uploaded: false  # Delete local files after successful upload
+  
+  - name: "PhotoBackup"
+    source_folder: "Z:/media/Photos/Favorites"
+    onedrive_folder: "/Backup/Photos"
+    file_patterns:
+      - "*.jpg"
+      - "*.jpeg"
+      - "*.png"
+      - "*.mp4"
+    preserve_structure: true  # Preserves folder structure like 2025/2025_11_23/photo.jpg
+    use_cache: true  # Cache uploaded files (recommended, especially for large sets)
+    use_watermark: true  # Only scan files modified since last run (much faster for incremental)
+    remove_uploaded: false
 
 # For Docker, use paths like:
 # destination_folder: "/photos/Profile1"
+# source_folder: "/nas/documents"

@@ -5,11 +5,12 @@ from datetime import datetime, timedelta
 from logger import get_logger
 
 class AuthManager:
-    def __init__(self, client_id, profile_name, data_dir="./data"):
+    def __init__(self, client_id, profile_name, data_dir="./data", auth_timeout=300):
         self.client_id = client_id
         self.profile_name = profile_name
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.auth_timeout = auth_timeout  # Timeout in seconds for device code flow
         
         self.token_file = self.data_dir / f"auth_{profile_name}.json"
         # Note: offline_access is automatically added by MSAL, don't include it manually
@@ -58,7 +59,10 @@ class AuthManager:
         return None
     
     def _device_code_flow(self):
-        """Authenticate using device code flow"""
+        """Authenticate using device code flow with timeout"""
+        import time
+        import threading
+        
         try:
             flow = self.app.initiate_device_flow(scopes=self.scopes)
         except Exception as e:
@@ -71,19 +75,35 @@ class AuthManager:
         
         self.logger.info("=" * 50)
         self.logger.info(f"AUTHENTICATION REQUIRED FOR: {self.profile_name}")
+        self.logger.info(f"Timeout: {self.auth_timeout} seconds ({self.auth_timeout // 60} minutes)")
         self.logger.info("=" * 50)
         self.logger.info(flow["message"])
         self.logger.info("=" * 50)
         
-        # Wait for user to authenticate
-        result = self.app.acquire_token_by_device_flow(flow)
+        # Wait for user to authenticate with timeout
+        result_container = [None]
         
-        if "access_token" in result:
+        def acquire_token():
+            result_container[0] = self.app.acquire_token_by_device_flow(flow)
+        
+        auth_thread = threading.Thread(target=acquire_token)
+        auth_thread.daemon = True
+        auth_thread.start()
+        auth_thread.join(timeout=self.auth_timeout)
+        
+        if auth_thread.is_alive():
+            # Timeout expired
+            self.logger.warning(f"Authentication timeout ({self.auth_timeout}s) expired for [{self.profile_name}], skipping profile")
+            return None
+        
+        result = result_container[0]
+        if result and "access_token" in result:
             self.logger.info(f"Authentication successful for [{self.profile_name}]!")
             self._save_token(result)
             return result
         else:
-            self.logger.error(f"Authentication failed: {result.get('error_description', 'Unknown error')}")
+            error_msg = result.get('error_description', 'Unknown error') if result else 'No response'
+            self.logger.error(f"Authentication failed: {error_msg}")
             return None
     
     def _refresh_token(self, refresh_token):

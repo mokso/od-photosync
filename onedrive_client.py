@@ -107,3 +107,179 @@ class OneDriveClient:
         # OneDrive provides 'file.hashes.sha256Hash' or 'file.hashes.quickXorHash'
         
         return True
+    
+    def get_items_in_folder(self, folder_path):
+        """Get all items in a specific folder path"""
+        # Handle root path
+        if folder_path == "/" or not folder_path:
+            endpoint = f"{self.base_url}/me/drive/root/children"
+        else:
+            # Remove leading/trailing slashes
+            folder_path = folder_path.strip('/')
+            endpoint = f"{self.base_url}/me/drive/root:/{folder_path}:/children"
+        
+        all_items = []
+        
+        while endpoint:
+            try:
+                response = requests.get(endpoint, headers=self.headers)
+                response.raise_for_status()
+                data = response.json()
+                
+                items = data.get('value', [])
+                all_items.extend(items)
+                
+                # Handle pagination
+                endpoint = data.get('@odata.nextLink')
+                
+            except requests.exceptions.RequestException as e:
+                self.logger.error(f"Error fetching items from {folder_path}: {e}")
+                break
+        
+        self.logger.info(f"Found {len(all_items)} items in {folder_path}")
+        return all_items
+    
+    def upload_file(self, local_path, onedrive_path):
+        """Upload file to OneDrive
+        
+        Args:
+            local_path: Path to local file
+            onedrive_path: Destination path in OneDrive (e.g., '/Backup/Photos/photo.jpg')
+        """
+        local_path = Path(local_path)
+        
+        if not local_path.exists():
+            self.logger.error(f"Local file does not exist: {local_path}")
+            return False
+        
+        file_size = local_path.stat().st_size
+        
+        # For files larger than 4MB, use upload session (resumable upload)
+        if file_size > 4 * 1024 * 1024:
+            return self._upload_large_file(local_path, onedrive_path)
+        else:
+            return self._upload_small_file(local_path, onedrive_path)
+    
+    def _upload_small_file(self, local_path, onedrive_path):
+        """Upload small file (< 4MB) in single request"""
+        try:
+            # Remove leading slash and construct endpoint
+            onedrive_path = onedrive_path.lstrip('/')
+            endpoint = f"{self.base_url}/me/drive/root:/{onedrive_path}:/content"
+            
+            with open(local_path, 'rb') as f:
+                file_content = f.read()
+            
+            headers = {
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/octet-stream'
+            }
+            
+            response = requests.put(endpoint, headers=headers, data=file_content)
+            response.raise_for_status()
+            
+            self.logger.info(f"Successfully uploaded {local_path.name} to {onedrive_path}")
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error uploading {local_path.name}: {e}")
+            return False
+    
+    def _upload_large_file(self, local_path, onedrive_path):
+        """Upload large file (>= 4MB) using resumable upload session"""
+        try:
+            # Create upload session
+            onedrive_path = onedrive_path.lstrip('/')
+            endpoint = f"{self.base_url}/me/drive/root:/{onedrive_path}:/createUploadSession"
+            
+            response = requests.post(endpoint, headers=self.headers)
+            response.raise_for_status()
+            upload_url = response.json()['uploadUrl']
+            
+            # Upload in chunks
+            chunk_size = 10 * 1024 * 1024  # 10MB chunks
+            file_size = local_path.stat().st_size
+            
+            with open(local_path, 'rb') as f:
+                chunk_start = 0
+                while chunk_start < file_size:
+                    chunk_end = min(chunk_start + chunk_size, file_size)
+                    chunk_data = f.read(chunk_size)
+                    
+                    headers = {
+                        'Content-Length': str(len(chunk_data)),
+                        'Content-Range': f'bytes {chunk_start}-{chunk_end-1}/{file_size}'
+                    }
+                    
+                    response = requests.put(upload_url, headers=headers, data=chunk_data)
+                    response.raise_for_status()
+                    
+                    chunk_start = chunk_end
+                    self.logger.debug(f"Uploaded {chunk_end}/{file_size} bytes of {local_path.name}")
+            
+            self.logger.info(f"Successfully uploaded {local_path.name} to {onedrive_path}")
+            return True
+            
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error uploading large file {local_path.name}: {e}")
+            return False
+    
+    def create_folder(self, folder_path):
+        """Create a folder in OneDrive if it doesn't exist
+        
+        Args:
+            folder_path: Path to folder (e.g., '/Backup/Photos')
+        
+        Returns:
+            True if folder exists or was created successfully
+        """
+        folder_path = folder_path.strip('/')
+        
+        # Check if folder exists
+        try:
+            endpoint = f"{self.base_url}/me/drive/root:/{folder_path}"
+            response = requests.get(endpoint, headers=self.headers)
+            
+            if response.status_code == 200:
+                # Folder exists
+                return True
+        except requests.exceptions.RequestException:
+            pass
+        
+        # Create folder hierarchy
+        parts = folder_path.split('/')
+        current_path = ""
+        
+        for part in parts:
+            parent_path = current_path if current_path else "root"
+            current_path = f"{current_path}/{part}" if current_path else part
+            
+            try:
+                # Try to get the folder first
+                endpoint = f"{self.base_url}/me/drive/root:/{current_path}"
+                response = requests.get(endpoint, headers=self.headers)
+                
+                if response.status_code == 200:
+                    continue  # Folder exists
+                
+                # Create the folder
+                if parent_path == "root":
+                    endpoint = f"{self.base_url}/me/drive/root/children"
+                else:
+                    endpoint = f"{self.base_url}/me/drive/root:/{parent_path}:/children"
+                
+                data = {
+                    "name": part,
+                    "folder": {},
+                    "@microsoft.graph.conflictBehavior": "rename"
+                }
+                
+                response = requests.post(endpoint, headers=self.headers, json=data)
+                response.raise_for_status()
+                self.logger.info(f"Created folder: {current_path}")
+                
+            except requests.exceptions.RequestException as e:
+                self.logger.error(f"Error creating folder {current_path}: {e}")
+                return False
+        
+        return True
