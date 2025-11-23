@@ -66,16 +66,47 @@ python photosync.py --schedule --interval 30
 python photosync.py --build-cache
 ```
 
-### Docker
+### Docker Compose 
 
-#### Using Pre-built Image (Recommended)
+Multiple compose files for different operations:
+
+```bash
+# 1. Setup environment
+cp .env.example .env
+# Edit .env: Set PHOTOS_PATH=/mnt/kuvat (or your mount path)
+
+# 2. Initial authentication (interactive)
+docker-compose -f docker-compose.auth.yml run --rm photosync-auth
+
+# 3. Optional: Build cache from existing OneDrive files (for large collections)
+docker-compose -f docker-compose.build-cache.yml run --rm photosync-build-cache
+
+# 4. Run scheduled sync (continuously, as daemon)
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop scheduled sync
+docker-compose down
+```
+
+**One-time sync:**
+```bash
+docker-compose -f docker-compose.sync-once.yml run --rm photosync-once
+```
+
+**Available compose files:**
+- `docker-compose.yml` - Scheduled sync (runs continuously)
+- `docker-compose.auth.yml` - Initial authentication
+- `docker-compose.build-cache.yml` - Build cache from OneDrive
+- `docker-compose.sync-once.yml` - Single sync run
+
+### Docker (Manual)
 
 ```bash
 # Pull the latest image
 docker pull ghcr.io/mokso/od-photosync:latest
-
-# Or use docker-compose with pre-built image
-# Update docker-compose.yml to use: image: ghcr.io/mokso/od-photosync:latest
 
 # Initial auth (interactive)
 docker run --rm -it \
@@ -84,19 +115,20 @@ docker run --rm -it \
   ghcr.io/mokso/od-photosync:latest \
   python photosync.py --initial-auth
 
-# Run sync
-docker run --rm \
+# Run scheduled sync
+docker run -d \
   -v /mnt/nas/photos:/photos \
   -v ./data:/app/data \
   -v ./config.yaml:/app/config.yaml:ro \
-  ghcr.io/mokso/od-photosync:latest
+  ghcr.io/mokso/od-photosync:latest \
+  python photosync.py --schedule
 ```
 
-#### Building Locally
+### Building Locally
 
 ```bash
 # Build
-docker-compose build
+docker build -t od-photosync .
 
 # Initial auth (interactive)
 docker-compose run --rm photosync python photosync.py --initial-auth

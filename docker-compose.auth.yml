@@ -1,0 +1,19 @@
+# Docker Compose for initial authentication
+# Usage: docker-compose -f docker-compose.auth.yml run --rm photosync-auth
+
+services:
+  photosync-auth:
+    image: ghcr.io/mokso/od-photosync:latest
+    # OR build locally: build: .
+    container_name: photosync-auth
+    volumes:
+      - ${PHOTOS_PATH}:/photos
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    command: python photosync.py --initial-auth
+    environment:
+      - RUNNING_IN_CONTAINER=true
+      - DATA_DIR=/app/data
+      - TZ=${TZ:-UTC}
+    stdin_open: true
+    tty: true

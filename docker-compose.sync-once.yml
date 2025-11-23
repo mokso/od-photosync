@@ -1,0 +1,17 @@
+# Docker Compose for single sync run (no scheduling)
+# Usage: docker-compose -f docker-compose.sync-once.yml run --rm photosync-once
+
+services:
+  photosync-once:
+    image: ghcr.io/mokso/od-photosync:latest
+    # OR build locally: build: .
+    container_name: photosync-once
+    volumes:
+      - ${PHOTOS_PATH}:/photos
+      - ./data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    command: python photosync.py
+    environment:
+      - RUNNING_IN_CONTAINER=true
+      - DATA_DIR=/app/data
+      - TZ=${TZ:-UTC}
