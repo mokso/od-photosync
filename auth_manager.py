@@ -25,7 +25,7 @@ class AuthManager:
             authority="https://login.microsoftonline.com/consumers"
         )
     
-    def get_access_token(self, force_device_code=False):
+    def get_access_token(self, force_device_code=False, force_refresh=False):
         """Get valid access token, refreshing if needed"""
         
         # Try to load existing token
@@ -34,15 +34,16 @@ class AuthManager:
             with open(self.token_file, 'r') as f:
                 token_data = json.load(f)
             
-            # Check if token is still valid
-            expires_at = datetime.fromisoformat(token_data['expires_at'])
-            if expires_at > datetime.now() + timedelta(minutes=5):
-                self.logger.info("Reusing cached access token")
-                return token_data['access_token']
+            # If not forcing a refresh, check if token is still valid
+            if not force_refresh:
+                expires_at = datetime.fromisoformat(token_data['expires_at'])
+                if expires_at > datetime.now() + timedelta(minutes=5):
+                    self.logger.info("Reusing cached access token")
+                    return token_data['access_token']
             
             # Try to refresh using refresh token
             if 'refresh_token' in token_data:
-                self.logger.info("Access token expired, refreshing...")
+                self.logger.info("Access token expired or refresh forced, refreshing...")
                 result = self._refresh_token(token_data['refresh_token'])
                 if result:
                     return result['access_token']

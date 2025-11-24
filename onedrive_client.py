@@ -5,16 +5,53 @@ from logger import get_logger
 import hashlib
 
 class OneDriveClient:
-    def __init__(self, access_token):
-        self.access_token = access_token
+    def __init__(self, auth_manager):
+        self.auth_manager = auth_manager
+        self.access_token = self.auth_manager.get_access_token()
+        if not self.access_token:
+            raise Exception("Failed to get initial access token.")
+            
         self.base_url = "https://graph.microsoft.com/v1.0"
         self.logger = get_logger()
         
         self.headers = {
-            'Authorization': f'Bearer {access_token}',
+            'Authorization': f'Bearer {self.access_token}',
             'Content-Type': 'application/json'
         }
-    
+
+    def _execute_request(self, method, url, retry=True, **kwargs):
+        """Wrapper for requests to handle token refresh"""
+        # Use custom headers if provided, else default
+        headers = kwargs.pop('headers', self.headers)
+        
+        try:
+            response = requests.request(method, url, headers=headers, **kwargs)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 401 and retry:
+                self.logger.info("Access token expired or invalid, refreshing...")
+                
+                # Refresh token
+                new_token = self.auth_manager.get_access_token(force_refresh=True)
+                if not new_token:
+                    self.logger.error("Failed to refresh access token.")
+                    raise e # Re-raise original exception
+                
+                # Update internal state and headers
+                self.access_token = new_token
+                self.headers['Authorization'] = f'Bearer {self.access_token}'
+                
+                # Update headers for the retried request
+                headers['Authorization'] = f'Bearer {self.access_token}'
+                
+                self.logger.info("Retrying request with new token...")
+                # Retry the request once more without the retry flag
+                return self._execute_request(method, url, retry=False, headers=headers, **kwargs)
+            
+            # Re-raise for other HTTP errors or if retry is false
+            raise e
+
     def get_camera_roll_items(self):
         """Get all items from camera roll folder"""
         endpoint = f"{self.base_url}/me/drive/special/cameraroll/children"
@@ -22,8 +59,7 @@ class OneDriveClient:
         
         while endpoint:
             try:
-                response = requests.get(endpoint, headers=self.headers)
-                response.raise_for_status()
+                response = self._execute_request('GET', endpoint)
                 data = response.json()
                 
                 items = data.get('value', [])
@@ -50,7 +86,7 @@ class OneDriveClient:
         try:
             self.logger.info(f"Downloading {item['name']} to {destination_path}")
             
-            # Stream download to handle large files
+            # Download does not need auth headers, so we don't use the wrapper
             response = requests.get(download_url, stream=True)
             response.raise_for_status()
             
@@ -71,8 +107,7 @@ class OneDriveClient:
         """Delete item from OneDrive by ID"""
         try:
             endpoint = f"{self.base_url}/me/drive/items/{item_id}"
-            response = requests.delete(endpoint, headers=self.headers)
-            response.raise_for_status()
+            self._execute_request('DELETE', endpoint)
             self.logger.info(f"Deleted item {item_id} from OneDrive")
             return True
         except requests.exceptions.RequestException as e:
@@ -122,8 +157,7 @@ class OneDriveClient:
         
         while endpoint:
             try:
-                response = requests.get(endpoint, headers=self.headers)
-                response.raise_for_status()
+                response = self._execute_request('GET', endpoint)
                 data = response.json()
                 
                 items = data.get('value', [])
@@ -170,13 +204,13 @@ class OneDriveClient:
             with open(local_path, 'rb') as f:
                 file_content = f.read()
             
+            # Use a specific header for this request, not the default json one
             headers = {
                 'Authorization': f'Bearer {self.access_token}',
                 'Content-Type': 'application/octet-stream'
             }
             
-            response = requests.put(endpoint, headers=headers, data=file_content)
-            response.raise_for_status()
+            self._execute_request('PUT', endpoint, headers=headers, data=file_content)
             
             self.logger.info(f"Successfully uploaded {local_path.name} to {onedrive_path}")
             return True
@@ -192,8 +226,7 @@ class OneDriveClient:
             onedrive_path = onedrive_path.lstrip('/')
             endpoint = f"{self.base_url}/me/drive/root:/{onedrive_path}:/createUploadSession"
             
-            response = requests.post(endpoint, headers=self.headers)
-            response.raise_for_status()
+            response = self._execute_request('POST', endpoint)
             upload_url = response.json()['uploadUrl']
             
             # Upload in chunks
@@ -211,6 +244,7 @@ class OneDriveClient:
                         'Content-Range': f'bytes {chunk_start}-{chunk_end-1}/{file_size}'
                     }
                     
+                    # This request does not need auth headers
                     response = requests.put(upload_url, headers=headers, data=chunk_data)
                     response.raise_for_status()
                     
@@ -238,14 +272,20 @@ class OneDriveClient:
         # Check if folder exists
         try:
             endpoint = f"{self.base_url}/me/drive/root:/{folder_path}"
-            response = requests.get(endpoint, headers=self.headers)
+            response = self._execute_request('GET', endpoint, retry=False) # Don't retry on 404
             
             if response.status_code == 200:
                 # Folder exists
                 return True
-        except requests.exceptions.RequestException:
-            pass
-        
+        except requests.exceptions.HTTPError as e:
+            # If we get a 404, that's fine, we'll create it.
+            if e.response.status_code != 404:
+                self.logger.error(f"Error checking folder {folder_path}: {e}")
+                return False
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error checking folder {folder_path}: {e}")
+            return False
+
         # Create folder hierarchy
         parts = folder_path.split('/')
         current_path = ""
@@ -257,12 +297,21 @@ class OneDriveClient:
             try:
                 # Try to get the folder first
                 endpoint = f"{self.base_url}/me/drive/root:/{current_path}"
-                response = requests.get(endpoint, headers=self.headers)
+                response = self._execute_request('GET', endpoint, retry=False)
                 
                 if response.status_code == 200:
                     continue  # Folder exists
-                
-                # Create the folder
+            
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code != 404:
+                    self.logger.error(f"Error checking sub-folder {current_path}: {e}")
+                    return False
+            except requests.exceptions.RequestException as e:
+                self.logger.error(f"Error checking sub-folder {current_path}: {e}")
+                return False
+
+            # Create the folder
+            try:
                 if parent_path == "root":
                     endpoint = f"{self.base_url}/me/drive/root/children"
                 else:
@@ -274,8 +323,7 @@ class OneDriveClient:
                     "@microsoft.graph.conflictBehavior": "rename"
                 }
                 
-                response = requests.post(endpoint, headers=self.headers, json=data)
-                response.raise_for_status()
+                self._execute_request('POST', endpoint, json=data)
                 self.logger.info(f"Created folder: {current_path}")
                 
             except requests.exceptions.RequestException as e:
@@ -283,3 +331,39 @@ class OneDriveClient:
                 return False
         
         return True
+
+    def get_all_items_delta(self, folder_path):
+        """Get all items in a folder path using delta query for efficiency."""
+        folder_path = folder_path.strip('/')
+        
+        # For delta query, it's most efficient to start from the root.
+        # We will filter by path later.
+        endpoint = f"{self.base_url}/me/drive/root/delta"
+
+        all_items = []
+        self.logger.info(f"Starting delta scan for drive. This may take a while...")
+        
+        page_count = 0
+        while endpoint:
+            try:
+                page_count += 1
+                self.logger.info(f"Fetching delta page {page_count}...")
+                response = self._execute_request('GET', endpoint)
+                data = response.json()
+                
+                items = data.get('value', [])
+                all_items.extend(items)
+                self.logger.info(f"Delta scan progress: fetched {len(all_items)} total items so far.")
+                
+                # Check for nextLink for pagination, or deltaLink for completion
+                if '@odata.deltaLink' in data:
+                    self.logger.info("Delta scan complete.")
+                    endpoint = None # End of scan
+                else:
+                    endpoint = data.get('@odata.nextLink')
+                
+            except requests.exceptions.RequestException as e:
+                self.logger.error(f"Error during delta query: {e}")
+                break
+            
+        return all_items

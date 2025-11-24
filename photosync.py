@@ -104,46 +104,49 @@ class PhotoSync:
         except Exception as e:
             self.logger.error(f"Failed to save cache: {e}")
     
-    def _get_all_onedrive_files(self, od_client, folder_path, base_path=""):
-        """Recursively get all files from OneDrive folder"""
-        all_files = {}
+    def _get_all_onedrive_files(self, od_client, folder_path):
+        """Get all files from a OneDrive folder using the efficient delta query."""
+        all_items = od_client.get_all_items_delta(folder_path)
         
-        try:
-            items = od_client.get_items_in_folder(folder_path)
-            
-            for item in items:
-                item_name = item['name']
-                
-                # Handle files
-                if 'file' in item:
-                    # Build relative path
-                    if base_path:
-                        relative_path = f"{base_path}/{item_name}"
-                    else:
-                        relative_path = item_name
-                    
-                    all_files[relative_path] = {
-                        'size': item.get('size', 0),
-                        'id': item.get('id'),
-                        'modified': item.get('lastModifiedDateTime')
-                    }
-                
-                # Handle folders recursively
-                elif 'folder' in item:
-                    subfolder_path = f"{folder_path}/{item_name}".replace('//', '/')
-                    if base_path:
-                        new_base_path = f"{base_path}/{item_name}"
-                    else:
-                        new_base_path = item_name
-                    
-                    # Recursive call
-                    subfiles = self._get_all_onedrive_files(od_client, subfolder_path, new_base_path)
-                    all_files.update(subfiles)
-            
-        except Exception as e:
-            self.logger.error(f"Error scanning OneDrive folder {folder_path}: {e}")
+        if not all_items:
+            return {}
+
+        all_files_map = {}
         
-        return all_files
+        # The folder_path from config is the root for this sync profile.
+        # We need to filter the delta results to only include items within this path.
+        folder_path = folder_path.strip('/')
+        path_prefix = f"/drive/root:/{folder_path}" if folder_path else "/drive/root:"
+
+        for item in all_items:
+            # Skip folders and items marked as deleted
+            if 'folder' in item or 'deleted' in item:
+                continue
+
+            # Skip items without path info in parent reference
+            if 'parentReference' not in item or 'path' not in item['parentReference']:
+                # This can happen for the root item itself, which we can ignore as it's a folder
+                continue
+
+            parent_path_str = item['parentReference']['path']
+            
+            # Check if the item is within our target folder path
+            if parent_path_str == path_prefix or parent_path_str.startswith(path_prefix + '/'):
+                # Make the path relative to the sync root folder
+                relative_folder_path = parent_path_str[len(path_prefix):].lstrip('/')
+                
+                if relative_folder_path:
+                    relative_path = f"{relative_folder_path}/{item['name']}"
+                else:
+                    relative_path = item['name']
+                
+                all_files_map[relative_path] = {
+                    'size': item.get('size', 0),
+                    'id': item.get('id'),
+                    'modified': item.get('lastModifiedDateTime')
+                }
+
+        return all_files_map
     
     def build_cache_from_onedrive(self, profile):
         """Build upload cache from existing OneDrive files"""
@@ -168,13 +171,12 @@ class PhotoSync:
             auth_timeout=auth_timeout
         )
         
-        access_token = auth_manager.get_access_token()
-        if not access_token:
-            self.logger.error(f"Authentication failed for profile [{profile_name}]")
+        try:
+            # Initialize OneDrive client
+            od_client = OneDriveClient(auth_manager)
+        except Exception as e:
+            self.logger.error(f"Authentication failed for profile [{profile_name}]: {e}")
             raise Exception(f"Authentication failed or timed out for profile [{profile_name}]")
-        
-        # Initialize OneDrive client
-        od_client = OneDriveClient(access_token)
         
         # Get all files from OneDrive recursively
         self.logger.info(f"Scanning OneDrive folder: {onedrive_folder}")
@@ -252,13 +254,14 @@ class PhotoSync:
             auth_timeout=auth_timeout
         )
         
-        access_token = auth_manager.get_access_token()
-        if not access_token:
-            self.logger.error(f"Authentication failed for profile [{profile_name}], skipping...")
+        try:
+            # Initialize OneDrive client
+            od_client = OneDriveClient(auth_manager)
+        except Exception as e:
+            self.logger.error(f"Authentication failed for profile [{profile_name}], skipping...: {e}")
             raise Exception(f"Authentication failed or timed out for profile [{profile_name}]")
         
         # Get OneDrive items
-        od_client = OneDriveClient(access_token)
         items = od_client.get_camera_roll_items()
         
         # Process each item
@@ -369,14 +372,13 @@ class PhotoSync:
             data_dir=self.data_dir,
             auth_timeout=auth_timeout
         )
-        
-        access_token = auth_manager.get_access_token()
-        if not access_token:
-            self.logger.error(f"Authentication failed for profile [{profile_name}], skipping...")
+
+        try:
+            # Initialize OneDrive client
+            od_client = OneDriveClient(auth_manager)
+        except Exception as e:
+            self.logger.error(f"Authentication failed for profile [{profile_name}], skipping...: {e}")
             raise Exception(f"Authentication failed or timed out for profile [{profile_name}]")
-        
-        # Initialize OneDrive client
-        od_client = OneDriveClient(access_token)
         
         # Ensure destination folder exists in OneDrive
         if not od_client.create_folder(onedrive_folder):
