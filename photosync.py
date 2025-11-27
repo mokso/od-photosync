@@ -158,9 +158,59 @@ class PhotoSync:
         self.logger.info("=" * 50)
         self.logger.info(f"Building cache from OneDrive for profile: {profile_name}")
         
+        # Validate source folder exists
         if not source_folder.exists():
             self.logger.error(f"Source folder does not exist: {source_folder}")
             return False
+        
+        # Check if source folder is empty
+        source_folder_contents = list(source_folder.iterdir())
+        if not source_folder_contents:
+            self.logger.error(f"Source folder is empty: {source_folder}")
+            self.logger.error("Cannot build cache from an empty source folder")
+            return False
+        
+        # Display source folder structure for verification
+        folders = [p for p in source_folder_contents if p.is_dir()]
+        files = [p for p in source_folder_contents if p.is_file()]
+        
+        self.logger.info(f"\nSource folder verification:")
+        self.logger.info(f"  Path: {source_folder}")
+        self.logger.info(f"  Subfolders: {len(folders)}")
+        self.logger.info(f"  Files: {len(files)}")
+        
+        if folders:
+            self.logger.info(f"  Sample subfolders (first 10): {[p.name for p in folders[:10]]}")
+        if files:
+            self.logger.info(f"  Sample files (first 10): {[p.name for p in files[:10]]}")
+        
+        # Count total files recursively
+        self.logger.info("  Counting files recursively...")
+        total_files = sum(1 for _ in source_folder.rglob('*') if _.is_file())
+        self.logger.info(f"  Total files (recursive): {total_files}")
+        
+        if total_files == 0:
+            self.logger.error("No files found in source folder (including subfolders)")
+            self.logger.error("Cannot build cache from a folder with no files")
+            return False
+        
+        # Ask for confirmation before proceeding
+        self.logger.warning(f"\nAbout to scan OneDrive folder: {onedrive_folder}")
+        self.logger.warning(f"This will be matched against: {source_folder}")
+        self.logger.warning(f"Expected to match up to {total_files} local files")
+        
+        # In non-interactive environments, you might want to skip this
+        # For now, add a 5-second delay to allow cancellation
+        self.logger.warning("\nStarting in 5 seconds... (Ctrl+C to cancel)")
+        try:
+            for i in range(5, 0, -1):
+                self.logger.info(f"  {i}...")
+                time.sleep(1)
+        except KeyboardInterrupt:
+            self.logger.info("\nCache build cancelled by user")
+            return False
+        
+        self.logger.info("\nProceeding with cache build...\n")
         
         # Authenticate
         auth_timeout = self.config.get('auth_timeout_seconds', 300)
@@ -188,12 +238,22 @@ class PhotoSync:
         
         if not onedrive_files:
             self.logger.warning("No files found in OneDrive folder")
+            self.logger.warning(f"OneDrive folder: {onedrive_folder}")
+            self.logger.warning("Make sure the folder path is correct and contains files")
             return False
+        
+        # Verify reasonable match ratio before proceeding
+        if len(onedrive_files) < total_files * 0.1:  # Less than 10% match
+            self.logger.warning(f"\nWarning: OneDrive has {len(onedrive_files)} files")
+            self.logger.warning(f"         Local has {total_files} files")
+            self.logger.warning("This seems like a significant mismatch. Continuing anyway...")
         
         # Build cache by matching with local files
         cache = {}
         matched_count = 0
         missing_local = 0
+        
+        self.logger.info("\nMatching OneDrive files with local files...")
         
         for relative_path, od_info in onedrive_files.items():
             # Construct local file path
@@ -223,15 +283,26 @@ class PhotoSync:
                 if missing_local <= 10:  # Only log first 10
                     self.logger.debug(f"File in OneDrive but not local: {relative_path}")
         
-        # Save cache
-        self._save_upload_cache(profile_name, cache)
+        # Final statistics and warnings
+        match_percentage = (matched_count / len(onedrive_files) * 100) if onedrive_files else 0
         
-        self.logger.info("=" * 50)
+        self.logger.info("\n" + "=" * 50)
         self.logger.info(f"Cache build complete for [{profile_name}]:")
         self.logger.info(f"  OneDrive files scanned: {len(onedrive_files)}")
-        self.logger.info(f"  Matched with local: {matched_count}")
+        self.logger.info(f"  Matched with local: {matched_count} ({match_percentage:.1f}%)")
         self.logger.info(f"  In OneDrive only: {missing_local}")
-        self.logger.info(f"  Cache file: upload_cache_{profile_name}.json")
+        self.logger.info(f"  Local files total: {total_files}")
+        
+        if match_percentage < 50:
+            self.logger.warning(f"\n  WARNING: Low match rate ({match_percentage:.1f}%)")
+            self.logger.warning(f"  This might indicate:")
+            self.logger.warning(f"    - Wrong source folder")
+            self.logger.warning(f"    - Wrong OneDrive folder")
+            self.logger.warning(f"    - Files organized differently")
+        
+        # Save cache
+        self._save_upload_cache(profile_name, cache)
+        self.logger.info(f"\n  Cache file: upload_cache_{profile_name}.json")
         self.logger.info("=" * 50)
         
         return True
@@ -735,6 +806,9 @@ def main():
     
     sync = PhotoSync(config_path=args.config)
     
+    # print config
+    sync.logger.info(f"Loaded config: {json.dumps(sync.config, indent=2)}")
+
     if args.logout:
         sync.logout()
     elif args.clear_cache:
