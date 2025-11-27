@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 from logger import get_logger
 import hashlib
+import time
 
 class OneDriveClient:
     def __init__(self, auth_manager):
@@ -344,26 +345,68 @@ class OneDriveClient:
         self.logger.info(f"Starting delta scan for drive. This may take a while...")
         
         page_count = 0
+        max_retries = 5
+        
         while endpoint:
-            try:
-                page_count += 1
-                self.logger.info(f"Fetching delta page {page_count}...")
-                response = self._execute_request('GET', endpoint)
-                data = response.json()
-                
-                items = data.get('value', [])
-                all_items.extend(items)
-                self.logger.info(f"Delta scan progress: fetched {len(all_items)} total items so far.")
-                
-                # Check for nextLink for pagination, or deltaLink for completion
-                if '@odata.deltaLink' in data:
-                    self.logger.info("Delta scan complete.")
-                    endpoint = None # End of scan
-                else:
-                    endpoint = data.get('@odata.nextLink')
-                
-            except requests.exceptions.RequestException as e:
-                self.logger.error(f"Error during delta query: {e}")
-                break
+            retry_count = 0
+            success = False
+            
+            while retry_count < max_retries and not success:
+                try:
+                    page_count += 1
+                    self.logger.info(f"Fetching delta page {page_count}...")
+                    response = self._execute_request('GET', endpoint)
+                    data = response.json()
+                    
+                    items = data.get('value', [])
+                    all_items.extend(items)
+                    self.logger.info(f"Delta scan progress: fetched {len(all_items)} total items so far.")
+                    
+                    # Check for nextLink for pagination, or deltaLink for completion
+                    if '@odata.deltaLink' in data:
+                        self.logger.info("Delta scan complete.")
+                        endpoint = None # End of scan
+                    else:
+                        endpoint = data.get('@odata.nextLink')
+                    
+                    success = True
+                    
+                    # Add small delay between requests to avoid rate limiting
+                    if endpoint:  # Only delay if there are more pages
+                        time.sleep(0.5)  # 500ms delay between requests
+                    
+                except requests.exceptions.HTTPError as e:
+                    # Handle 429 (Too Many Requests) with exponential backoff
+                    if e.response.status_code == 429:
+                        retry_count += 1
+                        
+                        # Get Retry-After header (in seconds)
+                        retry_after = e.response.headers.get('Retry-After')
+                        
+                        if retry_after:
+                            try:
+                                wait_time = int(retry_after)
+                            except ValueError:
+                                # Retry-After might be a date, use default backoff
+                                wait_time = min(60, 2 ** retry_count)
+                        else:
+                            # Exponential backoff: 2, 4, 8, 16, 32 seconds
+                            wait_time = min(60, 2 ** retry_count)
+                        
+                        self.logger.warning(f"Rate limit hit (429). Waiting {wait_time} seconds before retry {retry_count}/{max_retries}...")
+                        time.sleep(wait_time)
+                        
+                        if retry_count >= max_retries:
+                            self.logger.error(f"Max retries ({max_retries}) exceeded for delta query")
+                            return all_items  # Return partial results
+                    else:
+                        # Non-429 HTTP error, don't retry
+                        self.logger.error(f"HTTP error during delta query: {e}")
+                        return all_items  # Return partial results
+                        
+                except requests.exceptions.RequestException as e:
+                    # Network or other request error, don't retry
+                    self.logger.error(f"Error during delta query: {e}")
+                    return all_items  # Return partial results
             
         return all_items
