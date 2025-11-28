@@ -248,6 +248,54 @@ class PhotoSync:
             self.logger.warning(f"         Local has {total_files} files")
             self.logger.warning("This seems like a significant mismatch. Continuing anyway...")
         
+        # Build list of local files for comparison
+        self.logger.info("\nBuilding local file list...")
+        local_files = {}
+        file_patterns = profile.get('file_patterns', ['*.*'])
+        
+        for pattern in file_patterns:
+            for file_path in source_folder.rglob(pattern):
+                if file_path.is_file():
+                    relative_path = file_path.relative_to(source_folder)
+                    normalized_path = str(relative_path).replace('\\', '/')
+                    local_files[normalized_path] = {
+                        'size': file_path.stat().st_size,
+                        'modified': file_path.stat().st_mtime,
+                        'full_path': str(file_path)
+                    }
+        
+        self.logger.info(f"Found {len(local_files)} local files matching patterns")
+        
+        # Export diagnostic files
+        diagnostic_dir = self.data_dir / 'diagnostics'
+        diagnostic_dir.mkdir(exist_ok=True)
+        
+        onedrive_list_file = diagnostic_dir / f"onedrive_files_{profile_name}.txt"
+        local_list_file = diagnostic_dir / f"local_files_{profile_name}.txt"
+        
+        self.logger.info(f"\nExporting file lists for comparison:")
+        self.logger.info(f"  OneDrive files: {onedrive_list_file}")
+        self.logger.info(f"  Local files: {local_list_file}")
+        
+        # Export OneDrive files (sorted)
+        with open(onedrive_list_file, 'w', encoding='utf-8') as f:
+            f.write(f"OneDrive Folder: {onedrive_folder}\n")
+            f.write(f"Total Files: {len(onedrive_files)}\n")
+            f.write("=" * 80 + "\n\n")
+            for path in sorted(onedrive_files.keys()):
+                f.write(f"{path}\n")
+        
+        # Export local files (sorted)
+        with open(local_list_file, 'w', encoding='utf-8') as f:
+            f.write(f"Source Folder: {source_folder}\n")
+            f.write(f"Total Files: {len(local_files)}\n")
+            f.write(f"File Patterns: {file_patterns}\n")
+            f.write("=" * 80 + "\n\n")
+            for path in sorted(local_files.keys()):
+                f.write(f"{path}\n")
+        
+        self.logger.info("File lists exported successfully")
+        
         # Build cache by matching with local files
         cache = {}
         matched_count = 0
@@ -256,20 +304,17 @@ class PhotoSync:
         self.logger.info("\nMatching OneDrive files with local files...")
         
         for relative_path, od_info in onedrive_files.items():
-            # Construct local file path
-            local_file = source_folder / relative_path.replace('/', '\\')
-            
-            if local_file.exists() and local_file.is_file():
+            # Check if file exists in local files dictionary
+            if relative_path in local_files:
                 # File exists locally, add to cache
-                local_size = local_file.stat().st_size
-                local_mtime = local_file.stat().st_mtime
+                local_info = local_files[relative_path]
                 
                 # Normalize path for cache key
-                cache_key = relative_path.replace('\\', '/')
+                cache_key = relative_path
                 
                 cache[cache_key] = {
-                    'size': local_size,
-                    'modified': local_mtime,
+                    'size': local_info['size'],
+                    'modified': local_info['modified'],
                     'uploaded': datetime.now().isoformat(),
                     'onedrive_path': f"{onedrive_folder}/{relative_path}".replace('\\', '/'),
                     'synced_from_onedrive': True  # Mark as synced from OneDrive
@@ -286,12 +331,47 @@ class PhotoSync:
         # Final statistics and warnings
         match_percentage = (matched_count / len(onedrive_files) * 100) if onedrive_files else 0
         
+        # Export sample mismatches for debugging
+        if match_percentage < 50:
+            mismatch_file = diagnostic_dir / f"mismatch_analysis_{profile_name}.txt"
+            with open(mismatch_file, 'w', encoding='utf-8') as f:
+                f.write(f"Match Analysis for Profile: {profile_name}\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(f"Match Rate: {match_percentage:.1f}%\n")
+                f.write(f"OneDrive files: {len(onedrive_files)}\n")
+                f.write(f"Local files: {len(local_files)}\n")
+                f.write(f"Matched: {matched_count}\n\n")
+                
+                # Sample OneDrive files not in local
+                f.write("Sample OneDrive files NOT found locally (first 50):\n")
+                f.write("-" * 80 + "\n")
+                count = 0
+                for path in sorted(onedrive_files.keys()):
+                    if path not in local_files:
+                        f.write(f"{path}\n")
+                        count += 1
+                        if count >= 50:
+                            break
+                
+                # Sample local files not in OneDrive
+                f.write("\n\nSample local files NOT found in OneDrive (first 50):\n")
+                f.write("-" * 80 + "\n")
+                count = 0
+                for path in sorted(local_files.keys()):
+                    if path not in onedrive_files:
+                        f.write(f"{path}\n")
+                        count += 1
+                        if count >= 50:
+                            break
+            
+            self.logger.info(f"\nMismatch analysis saved to: {mismatch_file}")
+        
         self.logger.info("\n" + "=" * 50)
         self.logger.info(f"Cache build complete for [{profile_name}]:")
         self.logger.info(f"  OneDrive files scanned: {len(onedrive_files)}")
+        self.logger.info(f"  Local files found: {len(local_files)}")
         self.logger.info(f"  Matched with local: {matched_count} ({match_percentage:.1f}%)")
         self.logger.info(f"  In OneDrive only: {missing_local}")
-        self.logger.info(f"  Local files total: {total_files}")
         
         if match_percentage < 50:
             self.logger.warning(f"\n  WARNING: Low match rate ({match_percentage:.1f}%)")
@@ -299,6 +379,7 @@ class PhotoSync:
             self.logger.warning(f"    - Wrong source folder")
             self.logger.warning(f"    - Wrong OneDrive folder")
             self.logger.warning(f"    - Files organized differently")
+            self.logger.warning(f"\n  Check diagnostic files in: {diagnostic_dir}")
         
         # Save cache
         self._save_upload_cache(profile_name, cache)
